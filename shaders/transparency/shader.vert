@@ -14,6 +14,5 @@ uniform Uniforms {
 
 void main() {
   f_tex_coords = tex_coords;
-  // gl_Position = view * projection * vec4(position, 1.0);
   gl_Position =  projection * view * model * vec4(position, 1.0);
 }

@@ -71,11 +71,20 @@ fn glsl_to_spirv(path: &Path)-> (std::vec::Vec<u32>, std::vec::Vec<u32>) {
     let vertex_src = std::fs::read_to_string(path.join("shader.vert")).expect("Couldn't load vertex shader");
     let fragment_src = std::fs::read_to_string(path.join("shader.frag")).expect("Couldn't load fragment shader");
 
-    let vertex_spirv = glsl_to_spirv::compile(&vertex_src, glsl_to_spirv::ShaderType::Vertex).expect("Couldn't convert vertex shader");
-    let fragment_spirv = glsl_to_spirv::compile(&fragment_src, glsl_to_spirv::ShaderType::Fragment).expect("Couldn't convert fragment shader");
+    // let vertex_spirv = glsl_to_spirv::compile(&vertex_src, glsl_to_spirv::ShaderType::Vertex).expect("Couldn't convert vertex shader");
+    // let fragment_spirv = glsl_to_spirv::compile(&fragment_src, glsl_to_spirv::ShaderType::Fragment).expect("Couldn't convert fragment shader");
+    let mut compiler = shaderc::Compiler::new().expect("Couldn't create shaderc compiler");
+    let vertex_spirv = compiler.compile_into_spirv(
+        &vertex_src, shaderc::ShaderKind::Vertex,
+        "shader.vert", "main", None).expect("Couldn't convert GLSL to SPIR-V");
 
-    let vertex = wgpu::read_spirv(vertex_spirv).expect("Couldn't read vertex SPIRV");
-    let fragment = wgpu::read_spirv(fragment_spirv).expect("Couldn't read fragment SPIRV");
+    let fragment_spirv = compiler.compile_into_spirv(
+        &fragment_src, shaderc::ShaderKind::Fragment,
+        "shader.frag", "main", None).expect("Couldn't convert GLSL to SPIR-V");
+
+    use std::io::Cursor;
+    let vertex = wgpu::read_spirv(Cursor::new(vertex_spirv.as_binary_u8())).expect("Couldn't read vertex SPIR-V");
+    let fragment = wgpu::read_spirv(Cursor::new(fragment_spirv.as_binary_u8())).expect("Couldn't read fragment SPIR-V");
 
     (vertex, fragment)
 }
@@ -89,19 +98,25 @@ pub struct Renderer {
     pub sc_desc: wgpu::SwapChainDescriptor,
     swap_chain: wgpu::SwapChain,
 
-    tex: Texture,
-    opaque_bind_group: wgpu::BindGroup,
-    depth_tex: Texture,
-
+    img_tex: Texture,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
+
     uniforms: Uniforms,
     uniform_buffer: wgpu::Buffer,
     uniform_bind_group: wgpu::BindGroup,
 
+    depth_tex: Texture,
+    opaque_bind_group: wgpu::BindGroup,
     opaque_pipeline: wgpu::RenderPipeline,
-    // transparency_pipeline: wgpu::RenderPipeline,
-    // screen_pipeline: wgpu::RenderPipeline,
+
+    accum_tex: Texture,
+    revealage_tex: Texture,
+    transparency_bind_group: wgpu::BindGroup,
+    transparency_pipeline: wgpu::RenderPipeline,
+
+    screen_bind_group: wgpu::BindGroup,
+    screen_pipeline: wgpu::RenderPipeline,
 
     pub camera: Camera,
     size: winit::dpi::PhysicalSize<u32>,
@@ -191,42 +206,44 @@ impl Renderer {
         let opaque_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor{
             label: Some("texture bind group layout"),
             bindings: &[
-            wgpu::BindGroupLayoutEntry{
-                binding: 0,
-                visibility: wgpu::ShaderStage::FRAGMENT,
-                ty: wgpu::BindingType::SampledTexture{
-                    multisampled: false,
-                    dimension: wgpu::TextureViewDimension::D2,
-                    component_type: wgpu::TextureComponentType::Uint,
+                wgpu::BindGroupLayoutEntry{
+                    binding: 0,
+                    visibility: wgpu::ShaderStage::FRAGMENT,
+                    ty: wgpu::BindingType::SampledTexture{
+                        multisampled: false,
+                        dimension: wgpu::TextureViewDimension::D2,
+                        component_type: wgpu::TextureComponentType::Uint,
+                    },
                 },
-            },
-            wgpu::BindGroupLayoutEntry{
-                binding: 1,
-                visibility: wgpu::ShaderStage::FRAGMENT,
-                ty: wgpu::BindingType::Sampler{
-                    comparison: false,
+                wgpu::BindGroupLayoutEntry{
+                    binding: 1,
+                    visibility: wgpu::ShaderStage::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler{
+                        comparison: false,
+                    },
                 },
-            },
             ],
         });
 
         let img_path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/res/img"));
         let img_bytes = std::fs::read(img_path.join("glass.png")).expect("Couldn't read image");
-        let (tex, cmd_buffer) = Texture::from_bytes(&device, &img_bytes).expect("Couldn't load texture");
+        let (img_tex, cmd_buffer) = Texture::from_bytes(&device, &img_bytes).expect("Couldn't load texture");
         queue.submit(&[cmd_buffer]);
+
+        let opaque_out = Texture::create_empty(&device, &sc_desc, wgpu::TextureFormat::Rgba16Float, "opaque out tex");
 
         let opaque_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor{
             layout: &opaque_bind_group_layout,
-            label: Some("tex bind group"),
+            label: Some("img tex bind group"),
             bindings: &[
-            wgpu::Binding {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&tex.view),
-            },
-            wgpu::Binding{
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(&tex.sampler),
-            },
+                wgpu::Binding {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&img_tex.view),
+                },
+                wgpu::Binding{
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&img_tex.sampler),
+                },
             ],
         });
 
@@ -297,53 +314,224 @@ impl Renderer {
         });
 
         // ***************** TRANSPARENCY PIPELINE *****************
-        // let transparency_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor{
-        //     label: Some("transparency bind group layout"),
-        //     bindings: &[
-        //     wgpu::BindGroupLayoutEntry{
-        //         binding: 0,
-        //         visibility: wgpu::ShaderStage::FRAGMENT,
-        //         ty: wgpu::BindingType::SampledTexture{
-        //             multisampled: false,
-        //             dimension: wgpu::TextureViewDimension::D2,
-        //             component_type: wgpu::TextureComponentType::Uint,
-        //         },
-        //     },
-        //     wgpu::BindGroupLayoutEntry{
-        //         binding: 1,
-        //         visibility: wgpu::ShaderStage::FRAGMENT,
-        //         ty: wgpu::BindingType::SampledTexture{
-        //             multisampled: false,
-        //             dimension: wgpu::TextureViewDimension::D2,
-        //             component_type: wgpu::TextureComponentType::Uint,
-        //         },
-        //     },
-        //     ],
-        // });
-        //
-        // let accum_tex = Texture::create_empty(&device, &sc_desc, wgpu::TextureFormat::Rgba16Float, "accum tex");
-        // let revealage_tex = Texture::create_empty(&device, &sc_desc, wgpu::TextureFormat::R8Uint, "revealage tex");
-        //
-        // let transparency_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor{
-        //     layout: &opaque_bind_group_layout,
-        //     label: Some("tex bind group"),
-        //     bindings: &[
-        //     wgpu::Binding {
-        //         binding: 0,
-        //         resource: wgpu::BindingResource::TextureView(&accum_tex.view),
-        //     },
-        //     wgpu::Binding {
-        //         binding: 1,
-        //         resource: wgpu::BindingResource::TextureView(&revealage_tex.view),
-        //     },
-        //     ],
-        // });
-        //
-        // let shader_path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders"));
-        // let (vs, fs) = glsl_to_spirv(shader_path);
-        // let vs_module = device.create_shader_module(&vs);
-        // let fs_module = device.create_shader_module(&fs);
+        let transparency_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor{
+            label: Some("transparency bind group layout"),
+            bindings: &[
+                wgpu::BindGroupLayoutEntry{
+                    binding: 0,
+                    visibility: wgpu::ShaderStage::FRAGMENT,
+                    ty: wgpu::BindingType::SampledTexture{
+                        multisampled: false,
+                        dimension: wgpu::TextureViewDimension::D2,
+                        component_type: wgpu::TextureComponentType::Float,
+                    },
+                },
+                wgpu::BindGroupLayoutEntry{
+                    binding: 1,
+                    visibility: wgpu::ShaderStage::FRAGMENT,
+                    ty: wgpu::BindingType::SampledTexture{
+                        multisampled: false,
+                        dimension: wgpu::TextureViewDimension::D2,
+                        component_type: wgpu::TextureComponentType::Float,
+                    },
+                },
+            ],
+        });
 
+        let accum_tex = Texture::create_empty(&device, &sc_desc, wgpu::TextureFormat::Rgba16Float, "accum tex");
+        let revealage_tex = Texture::create_empty(&device, &sc_desc, wgpu::TextureFormat::R8Unorm, "revealage tex");
+
+        //for now, ignore this
+        let transparency_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor{
+            layout: &transparency_bind_group_layout,
+            label: Some("tex bind group"),
+            bindings: &[
+                wgpu::Binding {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&accum_tex.view),
+                },
+                wgpu::Binding {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&revealage_tex.view),
+                },
+            ],
+        });
+
+        let shader_path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/transparency"));
+        let (vs, fs) = glsl_to_spirv(shader_path);
+        let vs_module = device.create_shader_module(&vs);
+        let fs_module = device.create_shader_module(&fs);
+
+        let transparency_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor{
+            bind_group_layouts: &[
+                &opaque_bind_group_layout, //using opaque
+                &uniform_bind_group_layout,
+            ],
+        });
+
+        let transparency_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor{
+            layout: &transparency_pipeline_layout,
+            vertex_stage: wgpu::ProgrammableStageDescriptor{
+                module: &vs_module,
+                entry_point: "main",
+            },
+            fragment_stage: Some(wgpu::ProgrammableStageDescriptor{
+                module: &fs_module,
+                entry_point: "main",
+            }),
+            rasterization_state: Some(wgpu::RasterizationStateDescriptor{
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: wgpu::CullMode::Back,
+                depth_bias: 0,
+                depth_bias_slope_scale: 0.0,
+                depth_bias_clamp: 0.0,
+            }),
+            color_states: &[
+                wgpu::ColorStateDescriptor{
+                    format: wgpu::TextureFormat::Rgba16Float,
+                    color_blend: wgpu::BlendDescriptor{
+                        src_factor: wgpu::BlendFactor::One,
+                        dst_factor: wgpu::BlendFactor::One,
+                        operation: wgpu::BlendOperation::Add,
+                    },
+                    alpha_blend: wgpu::BlendDescriptor{
+                        src_factor: wgpu::BlendFactor::One,
+                        dst_factor: wgpu::BlendFactor::One,
+                        operation: wgpu::BlendOperation::Add,
+                    },
+                    write_mask: wgpu::ColorWrite::ALL,
+                },
+                wgpu::ColorStateDescriptor{
+                    format: wgpu::TextureFormat::R8Unorm,
+                    color_blend: wgpu::BlendDescriptor{
+                        src_factor: wgpu::BlendFactor::Zero,
+                        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                        operation: wgpu::BlendOperation::Add,
+                    },
+                    alpha_blend: wgpu::BlendDescriptor{
+                        src_factor: wgpu::BlendFactor::Zero,
+                        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                        operation: wgpu::BlendOperation::Add,
+                    },
+                    write_mask: wgpu::ColorWrite::ALL,
+                },
+            ],
+            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+            depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor{
+                format: Texture::DEPTH_FORMAT,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil_front: wgpu::StencilStateFaceDescriptor::IGNORE,
+                stencil_back: wgpu::StencilStateFaceDescriptor::IGNORE,
+                stencil_read_mask: 0,
+                stencil_write_mask: 0,
+            }),
+            vertex_state: wgpu::VertexStateDescriptor{
+                index_format: wgpu::IndexFormat::Uint16,
+                vertex_buffers: &[
+                    Vertex::desc(),
+                ],
+            },
+            sample_count: 1,
+            sample_mask: !0,
+            alpha_to_coverage_enabled: false,
+        });
+
+        // ***************** SCREEN PIPELINE *****************
+
+        let screen_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor{
+            label: Some("screen bind group layout"),
+            bindings: &[
+                wgpu::BindGroupLayoutEntry{
+                    binding: 0,
+                    visibility: wgpu::ShaderStage::FRAGMENT,
+                    ty: wgpu::BindingType::SampledTexture{
+                        multisampled: false,
+                        dimension: wgpu::TextureViewDimension::D2,
+                        component_type: wgpu::TextureComponentType::Float,
+                    },
+                },
+                wgpu::BindGroupLayoutEntry{
+                    binding: 1,
+                    visibility: wgpu::ShaderStage::FRAGMENT,
+                    ty: wgpu::BindingType::SampledTexture{
+                        multisampled: false,
+                        dimension: wgpu::TextureViewDimension::D2,
+                        component_type: wgpu::TextureComponentType::Float,
+                    },
+                },
+            ],
+        });
+
+        let screen_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor{
+            layout: &screen_bind_group_layout,
+            label: Some("tex bind group"),
+            bindings: &[
+                wgpu::Binding {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&accum_tex.view),
+                },
+                wgpu::Binding {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&revealage_tex.view),
+                },
+            ],
+        });
+
+        let shader_path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/screen"));
+        let (vs, fs) = glsl_to_spirv(shader_path);
+        let vs_module = device.create_shader_module(&vs);
+        let fs_module = device.create_shader_module(&fs);
+
+        let screen_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor{
+            bind_group_layouts: &[
+                &screen_bind_group_layout,
+            ],
+        });
+
+        let screen_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor{
+            layout: &screen_pipeline_layout,
+            vertex_stage: wgpu::ProgrammableStageDescriptor{
+                module: &vs_module,
+                entry_point: "main",
+            },
+            fragment_stage: Some(wgpu::ProgrammableStageDescriptor{
+                module: &fs_module,
+                entry_point: "main",
+            }),
+            rasterization_state: Some(wgpu::RasterizationStateDescriptor{
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: wgpu::CullMode::Back,
+                depth_bias: 0,
+                depth_bias_slope_scale: 0.0,
+                depth_bias_clamp: 0.0,
+            }),
+            color_states: &[
+                wgpu::ColorStateDescriptor{
+                    format: sc_desc.format,
+                    color_blend: wgpu::BlendDescriptor{
+                        src_factor: wgpu::BlendFactor::SrcAlpha,
+                        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                        operation: wgpu::BlendOperation::Add,
+                    },
+                    alpha_blend: wgpu::BlendDescriptor{
+                        src_factor: wgpu::BlendFactor::SrcAlpha,
+                        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                        operation: wgpu::BlendOperation::Add,
+                    },
+                    write_mask: wgpu::ColorWrite::ALL,
+                },
+            ],
+            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+            depth_stencil_state: None,
+            vertex_state: wgpu::VertexStateDescriptor{
+                index_format: wgpu::IndexFormat::Uint16,
+                vertex_buffers: &[],
+            },
+            sample_count: 1,
+            sample_mask: !0,
+            alpha_to_coverage_enabled: false,
+        });
 
         // ***************** BUFFERS *****************
         let vertices = &[
@@ -380,7 +568,6 @@ impl Renderer {
         );
 
         Self{
-            size,
             surface,
             adapter,
             device,
@@ -388,19 +575,28 @@ impl Renderer {
             sc_desc,
             swap_chain,
 
+            img_tex,
             vertex_buffer,
             index_buffer,
-
-            tex,
-            opaque_bind_group,
-            depth_tex,
-            opaque_pipeline,
 
             uniforms,
             uniform_buffer,
             uniform_bind_group,
 
+            depth_tex,
+            opaque_bind_group,
+            opaque_pipeline,
+
+            accum_tex,
+            revealage_tex,
+            transparency_bind_group,
+            transparency_pipeline,
+
+            screen_bind_group,
+            screen_pipeline,
+
             camera,
+            size,
             indices_len,
         }
     }
@@ -444,6 +640,30 @@ impl Renderer {
                         b: 0.3,
                         a: 1.0,
                     },
+                },
+                wgpu::RenderPassColorAttachmentDescriptor{
+                    attachment: &self.accum_tex.view,
+                    resolve_target: None,
+                    load_op: wgpu::LoadOp::Clear,
+                    store_op: wgpu::StoreOp::Store,
+                    clear_color: wgpu::Color{
+                        r: 0.,
+                        g: 0.,
+                        b: 0.,
+                        a: 0.,
+                    },
+                },
+                wgpu::RenderPassColorAttachmentDescriptor{
+                    attachment: &self.revealage_tex.view,
+                    resolve_target: None,
+                    load_op: wgpu::LoadOp::Clear,
+                    store_op: wgpu::StoreOp::Store,
+                    clear_color: wgpu::Color{
+                        r: 1.,
+                        g: 0.,
+                        b: 0.,
+                        a: 0.,
+                    },
                 }
             ],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachmentDescriptor{
@@ -480,41 +700,81 @@ impl Renderer {
             );
             encoder.copy_buffer_to_buffer(&staging_buffer, 0, &self.uniform_buffer, 0, std::mem::size_of::<Uniforms>() as wgpu::BufferAddress);
 
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor{
-                color_attachments: &[
-                    wgpu::RenderPassColorAttachmentDescriptor{
-                        attachment: &frame.view,
-                        resolve_target: None,
-                        load_op: wgpu::LoadOp::Load,
-                        store_op: wgpu::StoreOp::Store,
-                        clear_color: wgpu::Color{
-                            r: 0.1,
-                            g: 0.2,
-                            b: 0.3,
-                            a: 1.0,
+            {
+                let mut transparency_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor{
+                    color_attachments: &[
+                        wgpu::RenderPassColorAttachmentDescriptor{
+                            attachment: &self.accum_tex.view,
+                            resolve_target: None,
+                            load_op: wgpu::LoadOp::Load,
+                            store_op: wgpu::StoreOp::Store,
+                            clear_color: wgpu::Color{
+                                r: 0.,
+                                g: 0.,
+                                b: 0.,
+                                a: 0.,
+                            },
                         },
-                    }
+                        wgpu::RenderPassColorAttachmentDescriptor{
+                            attachment: &self.revealage_tex.view,
+                            resolve_target: None,
+                            load_op: wgpu::LoadOp::Load,
+                            store_op: wgpu::StoreOp::Store,
+                            clear_color: wgpu::Color{
+                                r: 1.,
+                                g: 0.,
+                                b: 0.,
+                                a: 0.,
+                            },
+                        }
+                    ],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachmentDescriptor{
+                        attachment: &self.depth_tex.view,
+                        depth_load_op: wgpu::LoadOp::Load,
+                        depth_store_op: wgpu::StoreOp::Store,
+                        clear_depth: 0.,
+                        stencil_load_op: wgpu::LoadOp::Load,
+                        stencil_store_op: wgpu::StoreOp::Store,
+                        clear_stencil: 0,
+                    }),
+                });
+
+                transparency_pass.set_pipeline(&self.transparency_pipeline);
+
+                transparency_pass.set_bind_group(0, &self.opaque_bind_group, &[]);
+                transparency_pass.set_bind_group(1, &self.uniform_bind_group, &[]);
+
+                transparency_pass.set_vertex_buffer(0, &self.vertex_buffer, 0, 0);
+                transparency_pass.set_index_buffer(&self.index_buffer, 0, 0);
+
+                transparency_pass.draw_indexed(0..self.indices_len, 0, 0..1);
+            }
+
+
+        }
+        {
+            let mut screen_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor{
+                color_attachments: &[
+                wgpu::RenderPassColorAttachmentDescriptor{
+                    attachment: &frame.view,
+                    resolve_target: None,
+                    load_op: wgpu::LoadOp::Load,
+                    store_op: wgpu::StoreOp::Store,
+                    clear_color: wgpu::Color{
+                        r: 0.1,
+                        g: 0.2,
+                        b: 0.3,
+                        a: 1.0,
+                    },
+                }
                 ],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachmentDescriptor{
-                    attachment: &self.depth_tex.view,
-                    depth_load_op: wgpu::LoadOp::Clear,
-                    depth_store_op: wgpu::StoreOp::Store,
-                    clear_depth: 1.0,
-                    stencil_load_op: wgpu::LoadOp::Clear,
-                    stencil_store_op: wgpu::StoreOp::Store,
-                    clear_stencil: 0,
-                }),
+                depth_stencil_attachment: None,
             });
 
-            render_pass.set_pipeline(&self.opaque_pipeline);
+            screen_pass.set_pipeline(&self.screen_pipeline);
+            screen_pass.set_bind_group(0, &self.screen_bind_group, &[]);
 
-            render_pass.set_bind_group(0, &self.opaque_bind_group, &[]);
-
-            render_pass.set_vertex_buffer(0, &self.vertex_buffer, 0, 0);
-            render_pass.set_index_buffer(&self.index_buffer, 0, 0);
-
-            render_pass.set_bind_group(1, &self.uniform_bind_group, &[]);
-            render_pass.draw_indexed(0..self.indices_len, 0, 0..1);
+            screen_pass.draw(0..6, 0..1);
         }
 
         self.queue.submit(&[

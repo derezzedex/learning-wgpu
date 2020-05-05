@@ -130,7 +130,7 @@ impl Texture{
             format,
             usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT
                 |  wgpu::TextureUsage::SAMPLED
-                |  wgpu::TextureUsage::COPY_SRC,
+                |  wgpu::TextureUsage::COPY_DST,
         };
 
         let texture = device.create_texture(&desc);
