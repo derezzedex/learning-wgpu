@@ -29,8 +29,8 @@ void writePixel(vec4 premultipliedReflect, vec3 transmit, float csZ) {
     /* If your scene has a lot of content very close to the far plane,
        then include this line (one rsqrt instruction):
        b /= sqrt(1e4 * abs(csZ)); */
-    float w    = clamp(a * a * a * 1e8 * b * b * b, 1e-2, 3e2);
-    // float w = clamp(pow(min(1.0, premultipliedReflect.a * 10.0) + 0.01, 3.0) * 1e8 * pow(1.0 - gl_FragCoord.z * 0.9, 3.0), 1e-2, 3e3);
+    // float w    = clamp(a * a * a * 1e8 * b * b * b, 1e-2, 3e2);
+    float w = clamp(pow(min(1.0, premultipliedReflect.a * 10.0) + 0.01, 3.0) * 1e8 * pow(1.0 - gl_FragCoord.z * 0.9, 3.0), 1e-2, 3e3);
     _accum     = premultipliedReflect * w;
     _revealage = premultipliedReflect.a;
 }
@@ -39,6 +39,11 @@ void main(){
   vec4 color = texture(sampler2D(t_tex, s_tex), v_tex_coords);
   float csZ;
 
-  vec3 transmit = vec3(1., 1., 1.);
-  writePixel(color, transmit, csZ);
+  // vec3 transmit = vec3(1., 1., 1.);
+  // writePixel(color, transmit, csZ);
+  float weight =
+      max(min(1.0, max(max(color.r, color.g), color.b) * color.a), color.a) *
+      clamp(0.03 / (1e-5 + pow(gl_FragCoord.z / 200, 4.0)), 1e-2, 3e3);
+  _accum = vec4(color.rgb * color.a, color.a) * weight;
+  _revealage = color.a;
 }
