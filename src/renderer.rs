@@ -230,7 +230,7 @@ impl Renderer {
         let (img_tex, cmd_buffer) = Texture::from_bytes(&device, &img_bytes).expect("Couldn't load texture");
         queue.submit(&[cmd_buffer]);
 
-        let opaque_out = Texture::create_empty(&device, &sc_desc, wgpu::TextureFormat::Rgba16Float, "opaque out tex");
+        // let opaque_out = Texture::create_empty(&device, &sc_desc, wgpu::TextureFormat::Rgba16Float, "opaque out tex");
 
         let opaque_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor{
             layout: &opaque_bind_group_layout,
