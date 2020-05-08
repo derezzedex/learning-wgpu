@@ -405,12 +405,12 @@ impl Renderer {
                     format: wgpu::TextureFormat::R8Unorm,
                     color_blend: wgpu::BlendDescriptor{
                         src_factor: wgpu::BlendFactor::Zero,
-                        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                        dst_factor: wgpu::BlendFactor::OneMinusSrcColor,
                         operation: wgpu::BlendOperation::Add,
                     },
                     alpha_blend: wgpu::BlendDescriptor{
                         src_factor: wgpu::BlendFactor::Zero,
-                        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                        dst_factor: wgpu::BlendFactor::Zero,
                         operation: wgpu::BlendOperation::Add,
                     },
                     write_mask: wgpu::ColorWrite::ALL,
