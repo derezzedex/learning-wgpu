@@ -8,7 +8,7 @@ use crate::texture::Texture;
 #[derive(Copy, Clone, Debug)]
 struct Vertex{
     position: [f32; 3],
-    tex_coords: [f32; 2],
+    tex_coord: [f32; 2],
 }
 
 impl Vertex{
@@ -67,7 +67,7 @@ unsafe impl bytemuck::Pod for Uniforms {}
 unsafe impl bytemuck::Zeroable for Uniforms {}
 
 fn glsl_to_spirv(path: &Path)-> (std::vec::Vec<u32>, std::vec::Vec<u32>) {
-    println!("Loading shaders at: {:?}\n", &path);
+    println!("Loading shaders at: {:?}", &path);
     let vertex_src = std::fs::read_to_string(path.join("shader.vert")).expect("Couldn't load vertex shader");
     let fragment_src = std::fs::read_to_string(path.join("shader.frag")).expect("Couldn't load fragment shader");
 
@@ -537,16 +537,16 @@ impl Renderer {
         let vertices = &[
 
             //Quad2
-            Vertex { position: [ 0.5, -0.5, 1.], tex_coords: [0., 1.], },
-            Vertex { position: [ 1.5, -0.5, 1.], tex_coords: [1., 1.], },
-            Vertex { position: [ 0.5,  0.5, 1.], tex_coords: [0., 0.], },
-            Vertex { position: [ 1.5,  0.5, 1.], tex_coords: [1., 0.], },
+            Vertex { position: [ 0.5, -0.5, 1.], tex_coord: [0., 1.], },
+            Vertex { position: [ 1.5, -0.5, 1.], tex_coord: [1., 1.], },
+            Vertex { position: [ 0.5,  0.5, 1.], tex_coord: [0., 0.], },
+            Vertex { position: [ 1.5,  0.5, 1.], tex_coord: [1., 0.], },
 
             //Quad1
-            Vertex { position: [-0.5, -0.5, 0.], tex_coords: [0., 1.], },
-            Vertex { position: [ 0.5, -0.5, 0.], tex_coords: [1., 1.], },
-            Vertex { position: [-0.5,  0.5, 0.], tex_coords: [0., 0.], },
-            Vertex { position: [ 0.5,  0.5, 0.], tex_coords: [1., 0.], },
+            Vertex { position: [-0.5, -0.5, 0.], tex_coord: [0., 1.], },
+            Vertex { position: [ 0.5, -0.5, 0.], tex_coord: [1., 1.], },
+            Vertex { position: [-0.5,  0.5, 0.], tex_coord: [0., 0.], },
+            Vertex { position: [ 0.5,  0.5, 0.], tex_coord: [1., 0.], },
         ];
         let indices: &[u16] = &[
             0, 1, 2,
