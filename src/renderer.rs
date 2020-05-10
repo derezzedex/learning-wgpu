@@ -1,5 +1,6 @@
 use crate::camera::{Camera};
-use cgmath::{Vector3, Matrix4, SquareMatrix};
+// use cgmath::{Vec3, Mat4, SquareMatrix};
+use glam::{Vec3, Mat4};
 use winit::window::Window;
 use std::path::Path;
 use crate::texture::Texture;
@@ -39,17 +40,17 @@ unsafe impl bytemuck::Zeroable for Vertex {}
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct Uniforms{
-    model: Matrix4<f32>,
-    view: Matrix4<f32>,
-    projection: Matrix4<f32>,
+    model: Mat4,
+    view: Mat4,
+    projection: Mat4,
 }
 
 impl Uniforms{
     pub fn new() -> Self{
         Self{
-            model: Matrix4::from_translation(Vector3::new(0., 0., 0.1)),
-            view: Matrix4::identity(),
-            projection: Matrix4::identity(),
+            model: Mat4::from_translation(Vec3::new(0., 0., 0.1)),
+            view: Mat4::identity(),
+            projection: Mat4::identity(),
         }
     }
 
@@ -58,8 +59,8 @@ impl Uniforms{
         self.projection = camera.get_projection();
     }
 
-    pub fn update_model(&mut self, model: Vector3<f32>){
-        self.model = Matrix4::from_translation(model);
+    pub fn update_model(&mut self, model: Vec3){
+        self.model = Mat4::from_translation(model);
     }
 }
 
@@ -157,12 +158,12 @@ impl Renderer {
         let camera = Camera {
             eye: (0., 0., 2.).into(),
             target: (0., 0., 0.1).into(),
-            up: Vector3::unit_y(),
+            up: Vec3::unit_y(),
             aspect: sc_desc.width as f32 / sc_desc.height as f32,
-            fovy: 45.,
+            fovy: 3.14 / 2.,
             near: 0.1,
             far: 100.,
-            velocity: Vector3::new(0., 0., 0.),
+            velocity: Vec3::new(0., 0., 0.),
         };
 
         // ***************** MVP UBO LAYOUT *****************
@@ -685,9 +686,9 @@ impl Renderer {
         });
 
         let models = [
-            Vector3::new(-2., 0., -2.),
-            Vector3::new(0., 0., 0.),
-            Vector3::new(2., 0., 2.),
+            Vec3::new(-2., 0., -2.),
+            Vec3::new(0., 0., 0.),
+            Vec3::new(2., 0., 2.),
         ];
 
         self.clear(&mut encoder, &frame.view);

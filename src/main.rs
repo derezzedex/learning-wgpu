@@ -12,6 +12,23 @@ mod texture;
 mod camera;
 mod timer;
 
+/*
+TODO:
+
+- FPS Camera (vectors)
+- FPS camera (quaternions)
+- Arcball camera (quaternions)
+- Chunk
+
+- Logging
+- Debug view
+- Console
+
+- Lighting
+- Ambient Occlusion
+
+*/
+
 pub struct Game{
     event_loop: EventLoop<()>,
     window: Window,
@@ -109,12 +126,12 @@ impl Game{
                             } => {
                                 match keycode{
                                     VirtualKeyCode::Escape => running = false,
-                                    VirtualKeyCode::W => renderer.camera.eye.z += 0.5,
-                                    VirtualKeyCode::S => renderer.camera.eye.z -= 0.5,
-                                    VirtualKeyCode::A => renderer.camera.eye.x += 0.5,
-                                    VirtualKeyCode::D => renderer.camera.eye.x -= 0.5,
-                                    VirtualKeyCode::Space => renderer.camera.eye.y += 0.5,
-                                    VirtualKeyCode::LShift => renderer.camera.eye.y -= 0.5,
+                                    VirtualKeyCode::W => renderer.camera.eye.set_z(renderer.camera.eye.z() + 0.5),
+                                    VirtualKeyCode::S => renderer.camera.eye.set_z(renderer.camera.eye.z() - 0.5),
+                                    VirtualKeyCode::A => renderer.camera.eye.set_x(renderer.camera.eye.x() + 0.5),
+                                    VirtualKeyCode::D => renderer.camera.eye.set_x(renderer.camera.eye.x() - 0.5),
+                                    VirtualKeyCode::Space => renderer.camera.eye.set_y(renderer.camera.eye.y() + 0.5),
+                                    VirtualKeyCode::LShift => renderer.camera.eye.set_y(renderer.camera.eye.y() - 0.5),
                                     _ => (),
                                 }
                             },
