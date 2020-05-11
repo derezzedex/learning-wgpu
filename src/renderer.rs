@@ -160,10 +160,12 @@ impl Renderer {
             target: (0., 0., 0.1).into(),
             up: Vec3::unit_y(),
             aspect: sc_desc.width as f32 / sc_desc.height as f32,
-            fovy: 3.14 / 2.,
+            fovy: 90f32.to_radians(),
             near: 0.1,
             far: 100.,
             velocity: Vec3::new(0., 0., 0.),
+            yaw: 0.,
+            pitch: 0.,
         };
 
         // ***************** MVP UBO LAYOUT *****************
@@ -602,15 +604,22 @@ impl Renderer {
         }
     }
 
+    pub fn get_camera(&mut self) -> &mut Camera{
+        &mut self.camera
+    }
+
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         self.size = new_size;
         self.sc_desc.width = new_size.width;
         self.sc_desc.height = new_size.height;
         self.depth_tex = Texture::create_depth(&self.device, &self.sc_desc, "depth texture");
+        self.accum_tex = Texture::create_empty(&self.device, &self.sc_desc, wgpu::TextureFormat::Rgba16Float, "accum tex");
+        self.revealage_tex = Texture::create_empty(&self.device, &self.sc_desc, wgpu::TextureFormat::R8Unorm, "revealage tex");
         self.swap_chain = self.device.create_swap_chain(&self.surface, &self.sc_desc);
     }
 
-    pub fn update(&mut self){
+    pub fn update(&mut self, dt: f32){
+        self.camera.update(dt);
         self.uniforms.update_view(&self.camera);
 
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {

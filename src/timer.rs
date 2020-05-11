@@ -34,4 +34,8 @@ impl Timer{
     pub fn update(&mut self){
         self.accumulator -= Duration::from_millis(1000 / Self::UPS);
     }
+
+    pub fn get_delta(&self) -> Duration{
+        self.delta
+    }
 }

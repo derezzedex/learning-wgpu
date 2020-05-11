@@ -43,6 +43,12 @@ impl Game{
             .build(&event_loop)
             .unwrap();
 
+        if let Err(e) = window.set_cursor_grab(true){
+            println!("Couldn't grab mouse, error: {}", e);
+        }
+
+        window.set_cursor_visible(false);
+
         let renderer = block_on(Renderer::new(&window));
 
         let running = true;
@@ -74,8 +80,7 @@ impl Game{
             }
 
             if c_timer.elapsed() >= std::time::Duration::from_secs(1){
-                println!("UPS: {}/{}", updates, timer::Timer::UPS);
-                println!("FPS: {}\n", frames);
+                println!("UPS: {} FPS:{} DT: {}", updates, frames, timer.get_delta().as_secs_f32());
                 updates = 0;
                 frames = 0;
                 c_timer = std::time::Instant::now();
@@ -90,7 +95,7 @@ impl Game{
                     timer.reset();
 
                     while timer.should_update(){
-                        renderer.update();
+                        renderer.update(timer.get_delta().as_secs_f32());
                         timer.update();
                         updates += 1;
                     }
@@ -99,7 +104,21 @@ impl Game{
                 },
                 Event::DeviceEvent { ref event, .. } => match event{
                     DeviceEvent::MouseMotion { delta } => {
-                        let (_dx, _dy) = delta;
+                        let (dx, dy) = delta;
+                        renderer.get_camera().mouse_update(*dx as f32, *dy as f32);
+                        let size = window.inner_size();
+                        if let Err(e) = window.set_cursor_position(winit::dpi::PhysicalPosition::new(size.width / 2, size.height / 2)){
+                            println!("Couldn't set cursor position, error: {}", e);
+                        }
+                    },
+                    DeviceEvent::MouseWheel { delta } => {
+                        let (_, dy) = match delta{
+                            MouseScrollDelta::LineDelta(x, y) => (*x, *y),
+                            MouseScrollDelta::PixelDelta(p) => (p.x as f32, p.y as f32),
+                        };
+
+                        renderer.get_camera().fovy -= dy.to_radians() * 2.;
+                        renderer.get_camera().fovy = renderer.get_camera().fovy.max(45.).min(120.);
                     },
                     _ => (),
                 },
@@ -120,18 +139,18 @@ impl Game{
                     } => {
                         match input {
                             KeyboardInput {
-                                state: ElementState::Pressed,
                                 virtual_keycode: Some(keycode),
                                 ..
                             } => {
+                                let velocity = 20.;
                                 match keycode{
                                     VirtualKeyCode::Escape => running = false,
-                                    VirtualKeyCode::W => renderer.camera.eye.set_z(renderer.camera.eye.z() + 0.5),
-                                    VirtualKeyCode::S => renderer.camera.eye.set_z(renderer.camera.eye.z() - 0.5),
-                                    VirtualKeyCode::A => renderer.camera.eye.set_x(renderer.camera.eye.x() + 0.5),
-                                    VirtualKeyCode::D => renderer.camera.eye.set_x(renderer.camera.eye.x() - 0.5),
-                                    VirtualKeyCode::Space => renderer.camera.eye.set_y(renderer.camera.eye.y() + 0.5),
-                                    VirtualKeyCode::LShift => renderer.camera.eye.set_y(renderer.camera.eye.y() - 0.5),
+                                    VirtualKeyCode::W => renderer.camera.velocity.set_z(-velocity),
+                                    VirtualKeyCode::S => renderer.camera.velocity.set_z(velocity),
+                                    VirtualKeyCode::A => renderer.camera.velocity.set_x(-velocity),
+                                    VirtualKeyCode::D => renderer.camera.velocity.set_x(velocity),
+                                    VirtualKeyCode::Space => renderer.camera.velocity.set_y(velocity),
+                                    VirtualKeyCode::LShift => renderer.camera.velocity.set_y(-velocity),
                                     _ => (),
                                 }
                             },
